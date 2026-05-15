@@ -1,18 +1,22 @@
 import { useState, useEffect, useMemo } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import { useData } from '../context/DataContext';
 import { generateNarrative } from '../services/aiService';
-import { ScoreRing, GlassCard, MetricCard, InsightCard, PageHeader } from '../components/ui/Components';
+import { ScoreRing, GlassCard, MetricCard, InsightCard, PageHeader, ExplainableScorePanel } from '../components/ui/Components';
 import { AreaChart, Area, ResponsiveContainer, Tooltip, XAxis } from 'recharts';
 import { Link } from 'react-router-dom';
 import { generateTrendData, generateCorrelations, generateInsights } from '../data/demoData';
+import { computeHealthScore } from '../engines/healthScoreEngine';
+import { computeFinanceScore } from '../engines/financeScoreEngine';
+import { computeCareerScore } from '../engines/careerScoreEngine';
 
 export default function Dashboard() {
   const { user } = useAuth();
-  const { health, finance, career, timeline, computed, aiCache, updateAICache } = useData();
+  const { health, finance, career, timeline, computed, aiCache, updateAICache, anomalies = [] } = useData();
   const [aiNarrative, setAiNarrative] = useState(null);
   const [narrativeLoading, setNarrativeLoading] = useState(false);
+  const [checkedTasks, setCheckedTasks] = useState({});
 
   const h = { sleepAvg: 0, stressLevel: 0, moodAvg: 0, workoutsPerWeek: 0, waterIntake: 0, calories: 0, bmi: 0, ...(health || {}) };
   const f = { income: 0, expenses: 0, savings: 0, investments: 0, subscriptions: 0, debt: 0, ...(finance || {}) };
@@ -24,9 +28,59 @@ export default function Dashboard() {
   const lifeBalance = computed?.balance || 0;
   const burnoutRisk = computed?.burnout?.risk || 0;
   const weakestDomain = computed?.weakestDomain?.name || 'health';
+
+  // Always compute explainable factors directly from raw data — independent of computed.hasData
+  const explainFactors = useMemo(() => ({
+    health: computeHealthScore(health || {}, []).factors,
+    finance: computeFinanceScore(finance || {}, []).factors,
+    career: computeCareerScore(career || {}, []).factors,
+  }), [health, finance, career]);
+
+  // Deterministic Today's Action Plan — generated from real domain data
+  const actionPlan = useMemo(() => {
+    const tasks = [];
+    const savingsRate = f.income > 0 ? Math.round(((f.income - f.expenses) / f.income) * 100) : 0;
+    // Health tasks
+    if (h.sleepAvg > 0 && h.sleepAvg < 7)
+      tasks.push({ id: 'sleep', icon: '😴', text: `Go to bed ${Math.max(0.5, 7 - h.sleepAvg).toFixed(1)}h earlier tonight`, domain: 'health', color: '#8b5cf6', time: '0 min effort', link: '/health' });
+    if (h.workoutsPerWeek >= 0 && h.workoutsPerWeek < 3)
+      tasks.push({ id: 'workout', icon: '💪', text: 'Do a 20-min home workout session', domain: 'health', color: '#10b981', time: '20 min', link: '/health' });
+    if (h.waterIntake > 0 && h.waterIntake < 7)
+      tasks.push({ id: 'water', icon: '💧', text: `Drink ${8 - Math.round(h.waterIntake)} more glasses of water today`, domain: 'health', color: '#06b6d4', time: 'All day', link: '/health' });
+    if (h.stressLevel > 6)
+      tasks.push({ id: 'stress', icon: '🧘', text: 'Take a 15-min meditation or walk break', domain: 'health', color: '#f43f5e', time: '15 min', link: '/health' });
+    // Finance tasks
+    if (savingsRate < 20 && f.income > 0)
+      tasks.push({ id: 'savings', icon: '💰', text: `Review subscriptions (₹${f.subscriptions}) — cancel one unused service`, domain: 'finance', color: '#f59e0b', time: '10 min', link: '/finance' });
+    if (f.debt > 0)
+      tasks.push({ id: 'debt', icon: '🏦', text: 'Make a debt repayment transfer today', domain: 'finance', color: '#ef4444', time: '5 min', link: '/finance' });
+    // Career tasks
+    if (c.dsaPractice < 3)
+      tasks.push({ id: 'dsa', icon: '🧩', text: `Solve ${Math.max(1, 3 - c.dsaPractice)} DSA problems on LeetCode`, domain: 'career', color: '#3b82f6', time: '45 min', link: '/career' });
+    if (c.studyHoursDaily < 4)
+      tasks.push({ id: 'study', icon: '📚', text: 'Block a 2-hour focused study session', domain: 'career', color: '#8b5cf6', time: '2 hours', link: '/career' });
+    if (c.skills.length < 5)
+      tasks.push({ id: 'skill', icon: '🎯', text: 'Add one new skill to your profile today', domain: 'career', color: '#06b6d4', time: '5 min', link: '/career' });
+    // Default if no data
+    if (tasks.length === 0) {
+      tasks.push(
+        { id: 'log-health', icon: '❤️', text: 'Log your health data to unlock insights', domain: 'health', color: '#10b981', time: '2 min', link: '/health' },
+        { id: 'log-finance', icon: '💰', text: 'Log your income and expenses', domain: 'finance', color: '#f59e0b', time: '2 min', link: '/finance' },
+        { id: 'log-career', icon: '📚', text: 'Log your study hours and skills', domain: 'career', color: '#3b82f6', time: '2 min', link: '/career' },
+      );
+    }
+    // Return top 3 highest priority tasks
+    return tasks.slice(0, 3);
+  }, [h, f, c]);
   
   // Use deterministic alerts from lifeBalanceEngine via DataContext
-  const urgentAlerts = computed?.urgentAlerts || [];
+  const urgentAlerts = [
+    ...(computed?.urgentAlerts || []),
+    ...anomalies.map(a => ({
+      icon: a.severity === 'critical' ? '🚨' : '⚠️',
+      text: `${a.title}: ${a.description} (${a.trend === 'up' ? '📈' : '📉'})`
+    }))
+  ];
   const positiveSignals = computed?.positiveSignals || [];
   const crossDomain = computed?.crossDomain || [];
 
@@ -192,6 +246,37 @@ export default function Dashboard() {
         </GlassCard>
       </div>
 
+      {/* Explainable AI Score Panels — always visible, shows defaults if no data logged */}
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="mb-8">
+        <h3 className="text-sm font-semibold mb-3 flex items-center gap-2" style={{ fontFamily: 'var(--font-display)' }}>
+          <span className="text-lg">🔍</span> Explainable AI — Why Your Scores
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">Advanced Feature</span>
+        </h3>
+        <div className="grid md:grid-cols-3 gap-4">
+          <ExplainableScorePanel
+            title="Health Score"
+            score={healthScore}
+            factors={explainFactors.health}
+            color="#10b981"
+            icon="❤️"
+          />
+          <ExplainableScorePanel
+            title="Finance Score"
+            score={financeScore}
+            factors={explainFactors.finance}
+            color="#f59e0b"
+            icon="💰"
+          />
+          <ExplainableScorePanel
+            title="Career Score"
+            score={careerScore}
+            factors={explainFactors.career}
+            color="#3b82f6"
+            icon="🎯"
+          />
+        </div>
+      </motion.div>
+
       <div className="grid lg:grid-cols-3 gap-6 mb-8">
         {/* Metrics + Chart */}
         <div className="lg:col-span-2 space-y-4">
@@ -285,6 +370,85 @@ export default function Dashboard() {
           </div>
         </GlassCard>
       </div>
+
+      {/* Today's Action Plan */}
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }} className="mb-6">
+        <GlassCard>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold flex items-center gap-2" style={{ fontFamily: 'var(--font-display)' }}>
+              <span className="text-lg">📋</span> Today's Action Plan
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">AI-generated from your data</span>
+            </h3>
+            <span className="text-[10px] text-slate-500">
+              {Object.values(checkedTasks).filter(Boolean).length}/{actionPlan.length} done
+            </span>
+          </div>
+
+          {/* Progress bar */}
+          <div className="w-full h-1.5 rounded-full bg-white/5 mb-4">
+            <motion.div
+              animate={{ width: `${(Object.values(checkedTasks).filter(Boolean).length / actionPlan.length) * 100}%` }}
+              transition={{ duration: 0.5 }}
+              className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-cyan-400"
+            />
+          </div>
+
+          <div className="space-y-3">
+            {actionPlan.map((task, i) => {
+              const done = !!checkedTasks[task.id];
+              return (
+                <motion.div
+                  key={task.id}
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: i * 0.08 }}
+                  className={`flex items-center gap-3 p-3 rounded-xl border transition-all cursor-pointer ${
+                    done ? 'border-emerald-500/20 bg-emerald-500/5 opacity-60' : 'border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.04]'
+                  }`}
+                  onClick={() => setCheckedTasks(prev => ({ ...prev, [task.id]: !prev[task.id] }))}
+                >
+                  {/* Checkbox */}
+                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${
+                    done ? 'border-emerald-400 bg-emerald-500/20' : 'border-white/20'
+                  }`}>
+                    {done && <span className="text-[10px] text-emerald-400">✓</span>}
+                  </div>
+
+                  <span className="text-lg flex-shrink-0">{task.icon}</span>
+
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-xs font-medium ${done ? 'line-through text-slate-500' : 'text-slate-200'}`}>{task.text}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full capitalize"
+                        style={{ color: task.color, background: task.color + '15' }}>{task.domain}</span>
+                      <span className="text-[9px] text-slate-600">⏱ {task.time}</span>
+                    </div>
+                  </div>
+
+                  <Link to={task.link} onClick={e => e.stopPropagation()}
+                    className="text-[10px] px-2 py-1 rounded-lg bg-white/5 text-slate-500 hover:text-white hover:bg-white/10 transition-all flex-shrink-0">
+                    Go →
+                  </Link>
+                </motion.div>
+              );
+            })}
+          </div>
+
+          <AnimatePresence>
+            {Object.values(checkedTasks).filter(Boolean).length === actionPlan.length && actionPlan.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="mt-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center"
+              >
+                <p className="text-sm text-emerald-400 font-semibold">🎉 All tasks complete! +50 XP earned</p>
+                <p className="text-[10px] text-emerald-500/60 mt-0.5">Come back tomorrow for a new plan</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </GlassCard>
+      </motion.div>
 
       {/* Quick Actions */}
       <GlassCard>

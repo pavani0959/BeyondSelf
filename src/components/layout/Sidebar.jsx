@@ -3,13 +3,13 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
+import { AnomalyBell } from '../ui/Components';
 
 const navItems = [
   { path: '/dashboard', label: 'Dashboard', icon: '🏠' },
   { path: '/health', label: 'Health', icon: '❤️' },
   { path: '/finance', label: 'Finance', icon: '💰' },
   { path: '/career', label: 'Career', icon: '🎯' },
-  { path: '/neural-core', label: 'Neural Core', icon: '🧬' }, // Added comma and fixed 'label'
   { path: '/goals', label: 'Goals', icon: '🏆' },
   { path: '/simulator', label: 'Simulator', icon: '🔮' },
   { path: '/insights', label: 'Insights', icon: '🧠' },
@@ -18,11 +18,12 @@ const navItems = [
   { path: '/upload', label: 'Data Import', icon: '📂' },
   { path: '/settings', label: 'Settings', icon: '⚙️' },
 ];
+
 export default function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
-  const { computed } = useData();
+  const { computed, anomalies = [] } = useData();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -76,6 +77,9 @@ export default function Sidebar() {
                     </Link>
                   );
                 })}
+                <div className="mt-2 border-t border-white/[0.05] pt-2">
+                  <AnomalyBell anomalies={anomalies} collapsed={false} />
+                </div>
               </nav>
               <div className="p-4 border-t border-white/[0.06]">
                 <div className="flex items-center gap-3 mb-3">
@@ -138,6 +142,9 @@ export default function Sidebar() {
               </Link>
             );
           })}
+          <div className="mt-2 border-t border-white/[0.05] pt-2">
+            <AnomalyBell anomalies={anomalies} collapsed={collapsed} />
+          </div>
         </nav>
 
         {/* User */}
